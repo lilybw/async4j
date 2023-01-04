@@ -17,5 +17,5 @@ NB: This is in beta. I've yet to impliment repeated and delayed concurrent execu
 Your encapsulated code will now automatically be distributed throughout the pool and executed as fast as possible.
 
 # Got Issues With Dependencies?
-This package was developed using the Java Spring ConcurrentBlockingQueue. Any implimentation of a concurrent blocking queue will do in its stead. 
+This package was developed using the Java.util.concurrency.ConcurrentBlockingQueue. Any implimentation of a concurrent blocking queue will do in its stead. 
 Everything else requires the java standard library only.
