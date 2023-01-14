@@ -41,6 +41,7 @@ public class EnrichedThread implements Runnable{
             while (shouldBeRunning.get()) {
                 try {
                     this.wait();
+                    //TODO; notify manager thread upon pool thread completion for immediate reassignment.
                     running.set(true);
                     if (currentRunnable != null) {
                         currentRunnable.run();

@@ -1,19 +1,35 @@
 package async4j;
 
 import async4j.iFunction;
+
+import java.util.Comparator;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class EnrichedRunnable<T> implements Runnable{
+public class EnrichedRunnable<T> implements Runnable, Comparable<EnrichedRunnable<?>>{
 
     public volatile AtomicBoolean isDone = new AtomicBoolean(false);
     public volatile AtomicBoolean isRunning = new AtomicBoolean(false);
+    public volatile long delayEnd = -1;
+    public volatile int timeoutMS = -1;
+    public volatile boolean repeating = false;
     private T returnObject;
     public iFunction<T> runnable;
 
     public EnrichedRunnable(iFunction<T> runnable){
+        this(runnable, -1);
+    }
+    public EnrichedRunnable(iFunction<T> runnable, int timeoutMS){
+        this(runnable,timeoutMS,false);
+    }
+
+    public EnrichedRunnable(iFunction<T> runnable, int timeoutMS, boolean repeating){
         Objects.requireNonNull(runnable);
         this.runnable = runnable;
+        this.delayEnd = System.currentTimeMillis() + timeoutMS;
+        this.timeoutMS = timeoutMS;
+        this.repeating = repeating;
     }
 
     @Override
@@ -22,8 +38,13 @@ public class EnrichedRunnable<T> implements Runnable{
 
         returnObject = runnable.execute();
 
+        if(repeating){
+            updateDelayEnd();
+            EntryPoint.repeatRunnable(this);
+        }else{
+            isRunning.set(false);
+        }
         isDone.set(true);
-        isRunning.set(false);
     }
 
     public synchronized T get()
@@ -45,5 +66,15 @@ public class EnrichedRunnable<T> implements Runnable{
             }
         }
         return returnObject;
+    }
+
+    private void updateDelayEnd()
+    {
+        this.delayEnd = timeoutMS + System.currentTimeMillis();
+    }
+
+    @Override
+    public int compareTo(EnrichedRunnable<?> o) {
+        return Long.compare(this.delayEnd,o.delayEnd);
     }
 }

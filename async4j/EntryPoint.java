@@ -1,20 +1,20 @@
 package async4j;
 
-import org.springframework.lang.Nullable;
-
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class EntryPoint implements Runnable{
 
    private static final EntryPoint instance = new EntryPoint();
-   private static volatile Queue<EnrichedRunnable<?>> queue = new ConcurrentLinkedQueue<>();
+   private static final Queue<EnrichedRunnable<?>> queue = new ConcurrentLinkedQueue<>();
+   private static final Queue<EnrichedRunnable<?>> delayedQueue = new PriorityBlockingQueue<>();
    private static final AtomicBoolean applicationIsRunning = new AtomicBoolean(true);
-   private static final Thread manager = new Thread(instance);
+   private static volatile Thread manager = new Thread(instance);
    private static final LoadDistributor distributor = new LoadDistributor();
 
-   private static long RETRY_DELAY_MSECS = 100L;
+   private static long RETRY_DELAY_MSECS = 10L; //When EnrichedThreads notify the manager thread, this won't be needed anymore
 
    static {
       Runtime.getRuntime().addShutdownHook(
@@ -76,6 +76,42 @@ public class EntryPoint implements Runnable{
    }
 
    /**
+    * Delays the execution of the given iFunction by passing it into a seperate
+    * blocking priority queue. When the time is up, the resulting EnrichedRunnable
+    * will be moved to the standard queue.
+    * @param function the function to run
+    * @param delayMS how milliseconds to delay the execution
+    * @return the runnable
+    */
+   public static <T> EnrichedRunnable<T> delay(iFunction<T> function, int delayMS)
+   {
+      EnrichedRunnable<T> enriched = new EnrichedRunnable<>(function,delayMS);
+      delayedQueue.add(new EnrichedRunnable<>(function));
+
+      if(delayMS < RETRY_DELAY_MSECS){
+         synchronized (instance) {
+            instance.notify();
+         }
+      }
+
+      return enriched;
+   }
+
+   /**
+    * Used for repeating EnrichedRunnables and meant for internal use only.
+    * If used remember to update parameters like delayEnd (or a multitude of side effects can occur)
+    */
+   public static <T> void repeatRunnable(EnrichedRunnable<T> enriched)
+   {
+      delayedQueue.add(enriched);
+      if(enriched.timeoutMS < RETRY_DELAY_MSECS){
+         synchronized (instance) {
+            instance.notify();
+         }
+      }
+   }
+
+   /**
     * Called only by the "Manager" thread. Which starts the entire loop
     * of waiting for new async calls, distributing these throughout the
     * threat pool and executing them.
@@ -89,13 +125,15 @@ public class EntryPoint implements Runnable{
          while(applicationIsRunning.get()){
             try {
                this.wait(msecs, 0);
+               final long now = System.currentTimeMillis();
 
+               letDelayedRejoinQueue(now);
                distributor.distribute(queue);
 
                if (!queue.isEmpty()) {
                   msecs = RETRY_DELAY_MSECS;
                } else {
-                  msecs = 0L;
+                  msecs = calculateSleepTime();
                }
 
             } catch (InterruptedException e) {
@@ -105,6 +143,23 @@ public class EntryPoint implements Runnable{
             }
          }
       }
+   }
+
+   private void letDelayedRejoinQueue(long now)
+   {
+      while(!delayedQueue.isEmpty()){
+         if(delayedQueue.peek().delayEnd <= now){
+            queue.add(delayedQueue.poll());
+         }
+      }
+   }
+
+   private long calculateSleepTime()
+   {
+      if(delayedQueue.isEmpty()){
+         return 0L;
+      }
+      return delayedQueue.peek().delayEnd - System.currentTimeMillis();
    }
 
    public static void setRetryDelay(long msecs)
@@ -125,8 +180,17 @@ public class EntryPoint implements Runnable{
    public static void initialize(int poolSize)
    {
       distributor.setPoolSize(poolSize);
+      manager = new Thread(instance);
       manager.start();
-      System.out.println(">> ASYNC System Startup Successful");
+      System.out.println(">> async4j System Startup Successful");
+   }
+
+   /**
+    * For testing purposes.
+    * @param i - max timeout
+    */
+   public static void requestShutdown(int i) {
+      shutdown();
    }
 
    /**
@@ -145,7 +209,9 @@ public class EntryPoint implements Runnable{
       } catch (InterruptedException e) {
          e.printStackTrace();
       }
+
       distributor.shutdown();
-      System.out.println(">> ASYNC || System Shutdown Successful");
+
+      System.out.println(">> async4j System Shutdown Successful");
    }
 }
